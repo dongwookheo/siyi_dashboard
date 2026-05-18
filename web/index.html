@@ -109,7 +109,7 @@
     height: calc(100% - 24px);
     object-fit: contain;
   }
-  /* Depth stream disabled: #vid-depth { height: calc(100% - 24px); } */
+  /* Depth stream disabled in this dashboard view. */
   #pcl-canvas {
     height: 330px;
     touch-action: none;
@@ -151,7 +151,7 @@
     <div class="badges">
       <span id="ws-status" class="status down">WS connecting...</span>
       <span id="rgb-status" class="status down">RGB -</span>
-      <!-- Depth stream disabled: <span id="depth-status" class="status down">Depth -</span> -->
+      <!-- Depth stream disabled. -->
       <span id="pcl-status" class="status idle">PointCloud -</span>
     </div>
   </header>
@@ -162,12 +162,7 @@
         <h2>RGB <span class="meta">WebRTC</span></h2>
         <video id="vid-rgb" autoplay playsinline muted></video>
       </div>
-      <!--
-      <div class="card">
-        <h2>Depth <span class="meta">colorized</span></h2>
-        <video id="vid-depth" autoplay playsinline muted></video>
-      </div>
-      -->
+      <!-- Depth video card disabled. -->
     </section>
 
     <section class="side">
@@ -260,8 +255,7 @@ async function whepConnect(streamPath, videoEl, badgeId) {
 }
 
 whepConnect('rgb', document.getElementById('vid-rgb'), 'rgb-status');
-// Depth stream disabled:
-// whepConnect('depth', document.getElementById('vid-depth'), 'depth-status');
+// Depth WHEP connection disabled.
 
 class PointCloudView {
   constructor(canvas) {
