@@ -278,6 +278,8 @@ class PointCloudView {
     this.maxZ = 1;
     this.pendingFrame = false;
     this.drag = null;
+    this.pointers = new Map();
+    this.pinchDistance = null;
 
     if (!this.gl) {
       setBadge('pcl-status', 'PointCloud no WebGL', 'down');
@@ -344,10 +346,33 @@ class PointCloudView {
 
   _bindInput() {
     this.canvas.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
       this.canvas.setPointerCapture(event.pointerId);
-      this.drag = { x: event.clientX, y: event.clientY };
+      this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (this.pointers.size === 1) {
+        this.drag = { x: event.clientX, y: event.clientY };
+        this.pinchDistance = null;
+      } else if (this.pointers.size === 2) {
+        this.drag = null;
+        this.pinchDistance = this._pointerDistance();
+      }
     });
     this.canvas.addEventListener('pointermove', (event) => {
+      if (!this.pointers.has(event.pointerId)) return;
+      event.preventDefault();
+      this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+      if (this.pointers.size >= 2) {
+        const distance = this._pointerDistance();
+        if (distance > 0 && this.pinchDistance) {
+          this.zoom *= this.pinchDistance / distance;
+          this.zoom = Math.max(0.35, Math.min(4.0, this.zoom));
+          this.requestRender();
+        }
+        this.pinchDistance = distance;
+        return;
+      }
+
       if (!this.drag) return;
       const dx = event.clientX - this.drag.x;
       const dy = event.clientY - this.drag.y;
@@ -357,14 +382,34 @@ class PointCloudView {
       this.rotX = Math.max(-1.55, Math.min(1.55, this.rotX));
       this.requestRender();
     });
-    this.canvas.addEventListener('pointerup', () => { this.drag = null; });
-    this.canvas.addEventListener('pointercancel', () => { this.drag = null; });
+    const clearPointer = (event) => {
+      this.pointers.delete(event.pointerId);
+      if (this.pointers.size === 1) {
+        const remaining = this.pointers.values().next().value;
+        this.drag = { x: remaining.x, y: remaining.y };
+        this.pinchDistance = null;
+      } else {
+        this.drag = null;
+        this.pinchDistance = null;
+      }
+    };
+    this.canvas.addEventListener('pointerup', clearPointer);
+    this.canvas.addEventListener('pointercancel', clearPointer);
+    this.canvas.addEventListener('pointerleave', clearPointer);
     this.canvas.addEventListener('wheel', (event) => {
       event.preventDefault();
       this.zoom *= Math.exp(event.deltaY * 0.001);
       this.zoom = Math.max(0.35, Math.min(4.0, this.zoom));
       this.requestRender();
     }, { passive: false });
+  }
+
+  _pointerDistance() {
+    const points = Array.from(this.pointers.values()).slice(0, 2);
+    if (points.length < 2) return 0;
+    const dx = points[0].x - points[1].x;
+    const dy = points[0].y - points[1].y;
+    return Math.hypot(dx, dy);
   }
 
   resize() {
