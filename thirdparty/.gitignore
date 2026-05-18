@@ -1,0 +1,7 @@
+# Downloaded MediaMTX binaries are not tracked.
+mediamtx/mediamtx
+mediamtx/mediamtx.yml
+mediamtx/LICENSE
+mediamtx/CHANGELOG*
+mediamtx/README*
+*.tar.gz

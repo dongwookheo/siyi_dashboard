@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SIYI Dashboard</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #101214;
+    --panel: #181b1f;
+    --panel-2: #111418;
+    --line: #2a3036;
+    --text: #e7ebee;
+    --muted: #9aa4ad;
+    --good: #245a3c;
+    --bad: #663033;
+    --accent: #4ea3ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 10px;
+    overflow: hidden;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 42px;
+    margin-bottom: 10px;
+  }
+  h1 { font-size: 18px; margin: 0; font-weight: 650; }
+  .badges {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+  .status {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #fff;
+    white-space: nowrap;
+  }
+  .ok { background: var(--good); }
+  .down { background: var(--bad); }
+  .idle { background: #39414a; }
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 430px;
+    gap: 10px;
+    height: calc(100vh - 62px);
+    min-height: 0;
+  }
+  .stack {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) 220px;
+    gap: 10px;
+    min-height: 0;
+  }
+  .side {
+    display: grid;
+    grid-template-rows: 390px minmax(0, 1fr);
+    gap: 10px;
+    min-height: 0;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 8px;
+    min-width: 0;
+    min-height: 0;
+  }
+  .card h2 {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 500;
+    margin: 0 0 6px;
+  }
+  .meta {
+    color: #7d8790;
+    font-size: 11px;
+    font-weight: 400;
+    white-space: nowrap;
+  }
+  video, canvas {
+    display: block;
+    width: 100%;
+    background: #050607;
+    border-radius: 4px;
+  }
+  video {
+    height: calc(100% - 24px);
+    object-fit: contain;
+  }
+  #vid-depth { height: calc(100% - 24px); }
+  #pcl-canvas {
+    height: 330px;
+    touch-action: none;
+  }
+  pre {
+    height: calc(100% - 44px);
+    margin: 0;
+    padding: 10px;
+    overflow: auto;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    color: #d4dade;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+  @media (max-width: 980px) {
+    body { overflow: auto; }
+    .layout {
+      display: block;
+      height: auto;
+    }
+    .stack, .side {
+      display: block;
+    }
+    .card {
+      margin-bottom: 10px;
+    }
+    video {
+      height: auto;
+      aspect-ratio: 16 / 9;
+    }
+  }
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <h1>SIYI Dashboard</h1>
+    <div class="badges">
+      <span id="ws-status" class="status down">WS connecting...</span>
+      <span id="rgb-status" class="status down">RGB -</span>
+      <span id="depth-status" class="status down">Depth -</span>
+      <span id="pcl-status" class="status idle">PointCloud -</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="stack">
+      <div class="card">
+        <h2>RGB <span class="meta">WebRTC</span></h2>
+        <video id="vid-rgb" autoplay playsinline muted></video>
+      </div>
+      <div class="card">
+        <h2>Depth <span class="meta">colorized</span></h2>
+        <video id="vid-depth" autoplay playsinline muted></video>
+      </div>
+    </section>
+
+    <section class="side">
+      <div class="card">
+        <h2>
+          PointCloud
+          <span class="meta">
+            <span id="pcl-count">0</span> pts |
+            <span id="pcl-rate">0.0</span> Hz
+          </span>
+        </h2>
+        <canvas id="pcl-canvas"></canvas>
+      </div>
+      <div class="card">
+        <h2>
+          /joy
+          <span class="meta">
+            <span id="last-ts">-</span> |
+            <span id="rate">0.0</span> Hz
+          </span>
+        </h2>
+        <pre id="last-joy">(아직 메시지 없음)</pre>
+      </div>
+    </section>
+  </main>
+
+<script>
+'use strict';
+
+function setBadge(id, text, state) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'status ' + state;
+}
+
+async function whepConnect(streamPath, videoEl, badgeId) {
+  const pc = new RTCPeerConnection({
+    iceServers: [],
+    bundlePolicy: 'max-bundle',
+  });
+  pc.addTransceiver('video', { direction: 'recvonly' });
+
+  pc.ontrack = (e) => {
+    if (videoEl.srcObject !== e.streams[0]) videoEl.srcObject = e.streams[0];
+  };
+  pc.onconnectionstatechange = () => {
+    const state = pc.connectionState;
+    setBadge(badgeId, `${streamPath} ${state}`, state === 'connected' ? 'ok' : 'down');
+    if (state === 'failed' || state === 'disconnected' || state === 'closed') {
+      try { pc.close(); } catch {}
+      setTimeout(() => whepConnect(streamPath, videoEl, badgeId), 2000);
+    }
+  };
+
+  setBadge(badgeId, `${streamPath} negotiating`, 'down');
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  await new Promise((resolve) => {
+    if (pc.iceGatheringState === 'complete') return resolve();
+    const check = () => {
+      if (pc.iceGatheringState === 'complete') {
+        pc.removeEventListener('icegatheringstatechange', check);
+        resolve();
+      }
+    };
+    pc.addEventListener('icegatheringstatechange', check);
+  });
+
+  const url = `${location.protocol}//${location.hostname}:8889/${streamPath}/whep`;
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/sdp' },
+      body: pc.localDescription.sdp,
+    });
+  } catch (err) {
+    setBadge(badgeId, `${streamPath} fetch fail`, 'down');
+    setTimeout(() => whepConnect(streamPath, videoEl, badgeId), 2000);
+    return;
+  }
+  if (!res.ok) {
+    setBadge(badgeId, `${streamPath} HTTP ${res.status}`, 'down');
+    setTimeout(() => whepConnect(streamPath, videoEl, badgeId), 2000);
+    return;
+  }
+  const answerSdp = await res.text();
+  await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+}
+
+whepConnect('rgb', document.getElementById('vid-rgb'), 'rgb-status');
+whepConnect('depth', document.getElementById('vid-depth'), 'depth-status');
+
+class PointCloudView {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.gl = canvas.getContext('webgl', {
+      antialias: false,
+      depth: true,
+      alpha: false,
+      powerPreference: 'low-power',
+    });
+    this.program = null;
+    this.buffer = null;
+    this.count = 0;
+    this.center = [0, 0, 0];
+    this.radius = 1;
+    this.rotX = -0.82;
+    this.rotZ = -0.62;
+    this.zoom = 1;
+    this.minZ = -1;
+    this.maxZ = 1;
+    this.pendingFrame = false;
+    this.drag = null;
+
+    if (!this.gl) {
+      setBadge('pcl-status', 'PointCloud no WebGL', 'down');
+      return;
+    }
+    this._initGL();
+    this._bindInput();
+    this.resize();
+    window.addEventListener('resize', () => this.resize());
+  }
+
+  _initGL() {
+    const vertex = `
+      attribute vec3 a_position;
+      uniform mat4 u_mvp;
+      uniform float u_point_size;
+      varying float v_z;
+      void main() {
+        gl_Position = u_mvp * vec4(a_position, 1.0);
+        gl_PointSize = u_point_size;
+        v_z = a_position.z;
+      }
+    `;
+    const fragment = `
+      precision mediump float;
+      uniform float u_min_z;
+      uniform float u_max_z;
+      varying float v_z;
+      void main() {
+        float t = clamp((v_z - u_min_z) / max(u_max_z - u_min_z, 0.0001), 0.0, 1.0);
+        vec3 low = vec3(0.10, 0.40, 0.92);
+        vec3 mid = vec3(0.16, 0.78, 0.58);
+        vec3 high = vec3(1.00, 0.82, 0.22);
+        vec3 color = mix(mix(low, mid, smoothstep(0.0, 0.65, t)), high, smoothstep(0.65, 1.0, t));
+        gl_FragColor = vec4(color, 1.0);
+      }
+    `;
+    const gl = this.gl;
+    const vs = this._compile(gl.VERTEX_SHADER, vertex);
+    const fs = this._compile(gl.FRAGMENT_SHADER, fragment);
+    const program = gl.createProgram();
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      throw new Error(gl.getProgramInfoLog(program));
+    }
+    this.program = program;
+    this.buffer = gl.createBuffer();
+    gl.useProgram(program);
+    gl.enable(gl.DEPTH_TEST);
+    gl.clearColor(0.02, 0.025, 0.03, 1);
+  }
+
+  _compile(type, source) {
+    const shader = this.gl.createShader(type);
+    this.gl.shaderSource(shader, source);
+    this.gl.compileShader(shader);
+    if (!this.gl.getShaderParameter(shader, this.gl.COMPILE_STATUS)) {
+      throw new Error(this.gl.getShaderInfoLog(shader));
+    }
+    return shader;
+  }
+
+  _bindInput() {
+    this.canvas.addEventListener('pointerdown', (event) => {
+      this.canvas.setPointerCapture(event.pointerId);
+      this.drag = { x: event.clientX, y: event.clientY };
+    });
+    this.canvas.addEventListener('pointermove', (event) => {
+      if (!this.drag) return;
+      const dx = event.clientX - this.drag.x;
+      const dy = event.clientY - this.drag.y;
+      this.drag = { x: event.clientX, y: event.clientY };
+      this.rotZ += dx * 0.008;
+      this.rotX += dy * 0.008;
+      this.rotX = Math.max(-1.55, Math.min(1.55, this.rotX));
+      this.requestRender();
+    });
+    this.canvas.addEventListener('pointerup', () => { this.drag = null; });
+    this.canvas.addEventListener('pointercancel', () => { this.drag = null; });
+    this.canvas.addEventListener('wheel', (event) => {
+      event.preventDefault();
+      this.zoom *= Math.exp(event.deltaY * 0.001);
+      this.zoom = Math.max(0.35, Math.min(4.0, this.zoom));
+      this.requestRender();
+    }, { passive: false });
+  }
+
+  resize() {
+    if (!this.gl) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    const width = Math.max(1, Math.floor(this.canvas.clientWidth * dpr));
+    const height = Math.max(1, Math.floor(this.canvas.clientHeight * dpr));
+    if (this.canvas.width !== width || this.canvas.height !== height) {
+      this.canvas.width = width;
+      this.canvas.height = height;
+      this.gl.viewport(0, 0, width, height);
+      this.requestRender();
+    }
+  }
+
+  update(message) {
+    if (!this.gl || !message.points || !message.bounds) return;
+    const bytes = this._base64ToBytes(message.points);
+    const count = Math.floor(bytes.byteLength / 6);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const b = message.bounds;
+    const cx = (b[0] + b[1]) * 0.5;
+    const cy = (b[2] + b[3]) * 0.5;
+    const cz = (b[4] + b[5]) * 0.5;
+    const rx = Math.max(0.001, b[1] - b[0]);
+    const ry = Math.max(0.001, b[3] - b[2]);
+    const rz = Math.max(0.001, b[5] - b[4]);
+    const vertices = new Float32Array(count * 3);
+
+    for (let i = 0; i < count; i += 1) {
+      const offset = i * 6;
+      vertices[i * 3] = (view.getUint16(offset, true) / 65535) * rx + b[0] - cx;
+      vertices[i * 3 + 1] = (view.getUint16(offset + 2, true) / 65535) * ry + b[2] - cy;
+      vertices[i * 3 + 2] = (view.getUint16(offset + 4, true) / 65535) * rz + b[4] - cz;
+    }
+
+    this.count = count;
+    this.center = [cx, cy, cz];
+    this.radius = Math.max(rx, ry, rz, 0.5);
+    this.minZ = b[4] - cz;
+    this.maxZ = b[5] - cz;
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffer);
+    this.gl.bufferData(this.gl.ARRAY_BUFFER, vertices, this.gl.DYNAMIC_DRAW);
+    this.requestRender();
+  }
+
+  _base64ToBytes(text) {
+    const raw = atob(text);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+    return bytes;
+  }
+
+  requestRender() {
+    if (this.pendingFrame || !this.gl) return;
+    this.pendingFrame = true;
+    requestAnimationFrame(() => {
+      this.pendingFrame = false;
+      this.render();
+    });
+  }
+
+  render() {
+    const gl = this.gl;
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    if (!this.count) return;
+
+    const aspect = gl.canvas.width / gl.canvas.height;
+    const projection = Mat4.perspective(50 * Math.PI / 180, aspect, 0.05, 5000);
+    let modelView = Mat4.identity();
+    modelView = Mat4.translate(modelView, 0, 0, -this.radius * 2.1 * this.zoom);
+    modelView = Mat4.rotateX(modelView, this.rotX);
+    modelView = Mat4.rotateZ(modelView, this.rotZ);
+    const mvp = Mat4.multiply(projection, modelView);
+
+    gl.useProgram(this.program);
+    const posLoc = gl.getAttribLocation(this.program, 'a_position');
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+    gl.enableVertexAttribArray(posLoc);
+    gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
+    gl.uniformMatrix4fv(gl.getUniformLocation(this.program, 'u_mvp'), false, mvp);
+    gl.uniform1f(gl.getUniformLocation(this.program, 'u_point_size'), Math.max(1.2, window.devicePixelRatio || 1));
+    gl.uniform1f(gl.getUniformLocation(this.program, 'u_min_z'), this.minZ);
+    gl.uniform1f(gl.getUniformLocation(this.program, 'u_max_z'), this.maxZ);
+    gl.drawArrays(gl.POINTS, 0, this.count);
+  }
+}
+
+const Mat4 = {
+  identity() {
+    return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  },
+  perspective(fovy, aspect, near, far) {
+    const f = 1 / Math.tan(fovy / 2);
+    const nf = 1 / (near - far);
+    return new Float32Array([
+      f / aspect, 0, 0, 0,
+      0, f, 0, 0,
+      0, 0, (far + near) * nf, -1,
+      0, 0, 2 * far * near * nf, 0,
+    ]);
+  },
+  multiply(a, b) {
+    const out = new Float32Array(16);
+    for (let row = 0; row < 4; row += 1) {
+      for (let col = 0; col < 4; col += 1) {
+        out[col * 4 + row] =
+          a[0 * 4 + row] * b[col * 4 + 0] +
+          a[1 * 4 + row] * b[col * 4 + 1] +
+          a[2 * 4 + row] * b[col * 4 + 2] +
+          a[3 * 4 + row] * b[col * 4 + 3];
+      }
+    }
+    return out;
+  },
+  translate(m, x, y, z) {
+    const t = Mat4.identity();
+    t[12] = x;
+    t[13] = y;
+    t[14] = z;
+    return Mat4.multiply(m, t);
+  },
+  rotateX(m, angle) {
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    const r = new Float32Array([1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1]);
+    return Mat4.multiply(m, r);
+  },
+  rotateZ(m, angle) {
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    const r = new Float32Array([c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    return Mat4.multiply(m, r);
+  },
+};
+
+const joyEl = document.getElementById('last-joy');
+const tsEl = document.getElementById('last-ts');
+const rateEl = document.getElementById('rate');
+const pclCountEl = document.getElementById('pcl-count');
+const pclRateEl = document.getElementById('pcl-rate');
+const joyTimes = [];
+const pclTimes = [];
+const pointCloudView = new PointCloudView(document.getElementById('pcl-canvas'));
+
+function pushRate(times, outputEl) {
+  const now = performance.now();
+  times.push(now);
+  while (times.length && now - times[0] > 1000) times.shift();
+  outputEl.textContent = times.length.toFixed(1);
+}
+
+function connectWS() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => setBadge('ws-status', 'WS connected', 'ok');
+  ws.onclose = () => {
+    setBadge('ws-status', 'WS disconnected', 'down');
+    setTimeout(connectWS, 2000);
+  };
+  ws.onerror = () => setBadge('ws-status', 'WS error', 'down');
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.topic === '/joy') {
+        joyEl.textContent = JSON.stringify(msg, null, 2);
+        pushRate(joyTimes, rateEl);
+        tsEl.textContent = new Date().toLocaleTimeString();
+      } else if (msg.topic === '/pointcloud') {
+        if (msg._error) {
+          setBadge('pcl-status', 'PointCloud error', 'down');
+          return;
+        }
+        pointCloudView.update(msg);
+        pclCountEl.textContent = String(msg.point_count || 0);
+        pushRate(pclTimes, pclRateEl);
+        setBadge('pcl-status', 'PointCloud live', 'ok');
+      }
+    } catch {
+      joyEl.textContent = event.data;
+    }
+  };
+}
+connectWS();
+</script>
+</body>
+</html>
