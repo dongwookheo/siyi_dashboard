@@ -71,7 +71,7 @@
   }
   .side {
     display: grid;
-    grid-template-rows: 390px minmax(0, 1fr);
+    grid-template-rows: 300px 150px 150px minmax(0, 1fr);
     gap: 10px;
     min-height: 0;
   }
@@ -111,8 +111,11 @@
   }
   /* Depth stream disabled in this dashboard view. */
   #pcl-canvas {
-    height: 330px;
+    height: calc(100% - 24px);
     touch-action: none;
+  }
+  .imu-canvas {
+    height: calc(100% - 24px);
   }
   pre {
     height: calc(100% - 44px);
@@ -153,6 +156,7 @@
       <span id="rgb-status" class="status down">RGB -</span>
       <!-- Depth stream disabled. -->
       <span id="pcl-status" class="status idle">PointCloud -</span>
+      <span id="imu-status" class="status idle">IMU -</span>
     </div>
   </header>
 
@@ -175,6 +179,24 @@
           </span>
         </h2>
         <canvas id="pcl-canvas"></canvas>
+      </div>
+      <div class="card">
+        <h2>
+          Angular Velocity
+          <span class="meta">
+            <span id="imu-rate">0.0</span> Hz
+          </span>
+        </h2>
+        <canvas id="imu-angular-canvas" class="imu-canvas"></canvas>
+      </div>
+      <div class="card">
+        <h2>
+          Linear Acceleration
+          <span class="meta">
+            <span id="imu-source">-</span>
+          </span>
+        </h2>
+        <canvas id="imu-linear-canvas" class="imu-canvas"></canvas>
       </div>
       <div class="card">
         <h2>
@@ -546,14 +568,168 @@ const Mat4 = {
   },
 };
 
+class ImuChart {
+  constructor(canvas, unitLabel) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.unitLabel = unitLabel;
+    this.samples = [];
+    this.maxSamples = 300;
+    this.pendingFrame = false;
+    this.colors = {
+      x: '#ff4040',
+      y: '#40d060',
+      z: '#4080ff',
+    };
+    this.resize();
+    window.addEventListener('resize', () => this.resize());
+  }
+
+  resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    const width = Math.max(1, Math.floor(this.canvas.clientWidth * dpr));
+    const height = Math.max(1, Math.floor(this.canvas.clientHeight * dpr));
+    if (this.canvas.width !== width || this.canvas.height !== height) {
+      this.canvas.width = width;
+      this.canvas.height = height;
+      this.requestDraw();
+    }
+  }
+
+  push(values) {
+    this.samples.push({
+      time: performance.now() / 1000,
+      x: Number(values.x) || 0,
+      y: Number(values.y) || 0,
+      z: Number(values.z) || 0,
+    });
+    if (this.samples.length > this.maxSamples) {
+      this.samples.splice(0, this.samples.length - this.maxSamples);
+    }
+    this.requestDraw();
+  }
+
+  requestDraw() {
+    if (this.pendingFrame) return;
+    this.pendingFrame = true;
+    requestAnimationFrame(() => {
+      this.pendingFrame = false;
+      this.draw();
+    });
+  }
+
+  draw() {
+    const ctx = this.ctx;
+    const width = this.canvas.width;
+    const height = this.canvas.height;
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = '#050607';
+    ctx.fillRect(0, 0, width, height);
+
+    const padL = 34;
+    const padR = 8;
+    const padT = 16;
+    const padB = 18;
+    const plotW = Math.max(1, width - padL - padR);
+    const plotH = Math.max(1, height - padT - padB);
+    const left = padL;
+    const top = padT;
+    const bottom = top + plotH;
+
+    ctx.strokeStyle = '#263039';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i += 1) {
+      const y = top + (plotH * i / 4);
+      ctx.beginPath();
+      ctx.moveTo(left, y);
+      ctx.lineTo(left + plotW, y);
+      ctx.stroke();
+    }
+
+    if (this.samples.length < 2) {
+      this._drawLegend(ctx, width);
+      return;
+    }
+
+    let minY = 0;
+    let maxY = 0;
+    for (const sample of this.samples) {
+      minY = Math.min(minY, sample.x, sample.y, sample.z);
+      maxY = Math.max(maxY, sample.x, sample.y, sample.z);
+    }
+    const absMax = Math.max(Math.abs(minY), Math.abs(maxY), 0.001);
+    minY = -absMax;
+    maxY = absMax;
+
+    const firstTime = this.samples[0].time;
+    const lastTime = this.samples[this.samples.length - 1].time;
+    const span = Math.max(0.001, lastTime - firstTime);
+    const xPos = (sample) => left + ((sample.time - firstTime) / span) * plotW;
+    const yPos = (value) => bottom - ((value - minY) / (maxY - minY)) * plotH;
+
+    const zeroY = yPos(0);
+    ctx.strokeStyle = '#54606a';
+    ctx.beginPath();
+    ctx.moveTo(left, zeroY);
+    ctx.lineTo(left + plotW, zeroY);
+    ctx.stroke();
+
+    ctx.fillStyle = '#89939c';
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(maxY.toFixed(2), left - 5, top + 8);
+    ctx.fillText('0', left - 5, zeroY + 3);
+    ctx.fillText(minY.toFixed(2), left - 5, bottom);
+    ctx.textAlign = 'left';
+    ctx.fillText(this.unitLabel, left, 10);
+
+    for (const axis of ['x', 'y', 'z']) {
+      ctx.strokeStyle = this.colors[axis];
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      this.samples.forEach((sample, index) => {
+        const x = xPos(sample);
+        const y = yPos(sample[axis]);
+        if (index === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    this._drawLegend(ctx, width);
+  }
+
+  _drawLegend(ctx, width) {
+    const items = [
+      ['x', this.colors.x],
+      ['y', this.colors.y],
+      ['z', this.colors.z],
+    ];
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    let x = width - 56;
+    for (const [label, color] of items) {
+      ctx.fillStyle = color;
+      ctx.fillRect(x, 7, 8, 2);
+      ctx.fillText(label, x + 11, 10);
+      x += 18;
+    }
+  }
+}
+
 const joyEl = document.getElementById('last-joy');
 const tsEl = document.getElementById('last-ts');
 const rateEl = document.getElementById('rate');
 const pclCountEl = document.getElementById('pcl-count');
 const pclRateEl = document.getElementById('pcl-rate');
+const imuRateEl = document.getElementById('imu-rate');
+const imuSourceEl = document.getElementById('imu-source');
 const joyTimes = [];
 const pclTimes = [];
+const imuTimes = [];
 const pointCloudView = new PointCloudView(document.getElementById('pcl-canvas'));
+const imuAngularChart = new ImuChart(document.getElementById('imu-angular-canvas'), 'rad/s');
+const imuLinearChart = new ImuChart(document.getElementById('imu-linear-canvas'), 'm/s²');
 
 function pushRate(times, outputEl) {
   const now = performance.now();
@@ -586,6 +762,12 @@ function connectWS() {
         pclCountEl.textContent = String(msg.point_count || 0);
         pushRate(pclTimes, pclRateEl);
         setBadge('pcl-status', 'PointCloud live', 'ok');
+      } else if (msg.topic === '/imu') {
+        imuAngularChart.push(msg.angular_velocity || { x: 0, y: 0, z: 0 });
+        imuLinearChart.push(msg.linear_acceleration || { x: 0, y: 0, z: 0 });
+        pushRate(imuTimes, imuRateEl);
+        imuSourceEl.textContent = msg.source_topic || '-';
+        setBadge('imu-status', 'IMU live', 'ok');
       }
     } catch {
       joyEl.textContent = event.data;

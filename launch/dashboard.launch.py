@@ -26,6 +26,8 @@ def generate_launch_description():
                         "pointcloud_topic": "/Laser_map",
                         "pointcloud_max_points": 24576,
                         "pointcloud_rate_hz": 6.0,
+                        "imu_topic": "/imu/data",
+                        "imu_rate_hz": 20.0,
                     }
                 ],
             ),

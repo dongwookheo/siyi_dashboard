@@ -3,6 +3,7 @@ ROS 2 node + Tornado WebSocket server + static file serving.
 
 Telemetry:
   /joy (sensor_msgs/Joy)                         -> JSON text frame
+  Imu configured by imu_topic                    -> JSON text frame
   PointCloud2 configured by pointcloud_topic     -> compressed JSON text frame
 
 RealSense color/depth flow over WebRTC via MediaMTX (see image_bridge.py).
@@ -21,7 +22,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import Joy, PointCloud2, PointField
+from sensor_msgs.msg import Imu, Joy, PointCloud2, PointField
 
 import tornado.ioloop
 import tornado.web
@@ -33,6 +34,12 @@ from ament_index_python.packages import get_package_share_directory
 CLIENTS: "set[tornado.websocket.WebSocketHandler]" = set()
 
 POINT_CLOUD_QOS = QoSProfile(
+    reliability=ReliabilityPolicy.BEST_EFFORT,
+    history=HistoryPolicy.KEEP_LAST,
+    depth=1,
+)
+
+IMU_QOS = QoSProfile(
     reliability=ReliabilityPolicy.BEST_EFFORT,
     history=HistoryPolicy.KEEP_LAST,
     depth=1,
@@ -79,6 +86,9 @@ class DashboardNode(Node):
             self.declare_parameter("pointcloud_rate_hz", 6.0).value
         )
         self._pointcloud_last_publish = 0.0
+        self._imu_topic = self.declare_parameter("imu_topic", "/imu/data").value
+        self._imu_rate_hz = float(self.declare_parameter("imu_rate_hz", 20.0).value)
+        self._imu_last_publish = 0.0
 
         if self._pointcloud_topic:
             self.create_subscription(
@@ -94,6 +104,13 @@ class DashboardNode(Node):
                 f"{self._pointcloud_rate_hz:.1f} Hz)"
             )
 
+        if self._imu_topic:
+            self.create_subscription(Imu, self._imu_topic, self._on_imu, IMU_QOS)
+            self.get_logger().info(
+                "siyi_dashboard subscribed: "
+                f"{self._imu_topic} (max {self._imu_rate_hz:.1f} Hz)"
+            )
+
     def _on_joy(self, msg: Joy) -> None:
         payload = {
             "topic": "/joy",
@@ -102,6 +119,36 @@ class DashboardNode(Node):
             "buttons": list(msg.buttons),
         }
         text = json.dumps(payload)
+        self._ioloop.add_callback(_broadcast, text)
+
+    def _on_imu(self, msg: Imu) -> None:
+        if not CLIENTS:
+            return
+
+        now = time.monotonic()
+        if self._imu_rate_hz > 0.0:
+            interval = 1.0 / self._imu_rate_hz
+            if now - self._imu_last_publish < interval:
+                return
+        self._imu_last_publish = now
+
+        payload = {
+            "topic": "/imu",
+            "source_topic": self._imu_topic,
+            "stamp": msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
+            "frame_id": msg.header.frame_id,
+            "angular_velocity": {
+                "x": msg.angular_velocity.x,
+                "y": msg.angular_velocity.y,
+                "z": msg.angular_velocity.z,
+            },
+            "linear_acceleration": {
+                "x": msg.linear_acceleration.x,
+                "y": msg.linear_acceleration.y,
+                "z": msg.linear_acceleration.z,
+            },
+        }
+        text = json.dumps(payload, separators=(",", ":"))
         self._ioloop.add_callback(_broadcast, text)
 
     def _on_pointcloud(self, msg: PointCloud2) -> None:
