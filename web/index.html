@@ -626,10 +626,27 @@ class ImuChart {
     ctx.fillStyle = '#050607';
     ctx.fillRect(0, 0, width, height);
 
-    const padL = 34;
+    const fontSize = 11;
+    const font = `${fontSize}px system-ui, sans-serif`;
+    ctx.font = font;
+    ctx.textBaseline = 'middle';
+
+    let minY = 0;
+    let maxY = 0;
+    for (const sample of this.samples) {
+      minY = Math.min(minY, sample.x, sample.y, sample.z);
+      maxY = Math.max(maxY, sample.x, sample.y, sample.z);
+    }
+    const absMax = Math.max(Math.abs(minY), Math.abs(maxY), 0.001);
+    minY = -absMax;
+    maxY = absMax;
+
+    const yLabels = [maxY.toFixed(2), '0', minY.toFixed(2)];
+    const labelWidth = Math.max(...yLabels.map((label) => ctx.measureText(label).width));
+    const padL = Math.ceil(labelWidth + 14);
     const padR = 8;
-    const padT = 16;
-    const padB = 18;
+    const padT = fontSize + 12;
+    const padB = fontSize + 10;
     const plotW = Math.max(1, width - padL - padR);
     const plotH = Math.max(1, height - padT - padB);
     const left = padL;
@@ -647,19 +664,12 @@ class ImuChart {
     }
 
     if (this.samples.length < 2) {
-      this._drawLegend(ctx, width);
+      ctx.fillStyle = '#89939c';
+      ctx.textAlign = 'left';
+      ctx.fillText(this.unitLabel, left, Math.max(fontSize, padT * 0.45));
+      this._drawLegend(ctx, width, font);
       return;
     }
-
-    let minY = 0;
-    let maxY = 0;
-    for (const sample of this.samples) {
-      minY = Math.min(minY, sample.x, sample.y, sample.z);
-      maxY = Math.max(maxY, sample.x, sample.y, sample.z);
-    }
-    const absMax = Math.max(Math.abs(minY), Math.abs(maxY), 0.001);
-    minY = -absMax;
-    maxY = absMax;
 
     const firstTime = this.samples[0].time;
     const lastTime = this.samples[this.samples.length - 1].time;
@@ -675,13 +685,14 @@ class ImuChart {
     ctx.stroke();
 
     ctx.fillStyle = '#89939c';
-    ctx.font = '11px system-ui, sans-serif';
+    ctx.font = font;
+    ctx.textBaseline = 'middle';
     ctx.textAlign = 'right';
-    ctx.fillText(maxY.toFixed(2), left - 5, top + 8);
-    ctx.fillText('0', left - 5, zeroY + 3);
-    ctx.fillText(minY.toFixed(2), left - 5, bottom);
+    ctx.fillText(yLabels[0], left - 6, top);
+    ctx.fillText(yLabels[1], left - 6, zeroY);
+    ctx.fillText(yLabels[2], left - 6, bottom);
     ctx.textAlign = 'left';
-    ctx.fillText(this.unitLabel, left, 10);
+    ctx.fillText(this.unitLabel, left, Math.max(fontSize, padT * 0.45));
 
     for (const axis of ['x', 'y', 'z']) {
       ctx.strokeStyle = this.colors[axis];
@@ -696,23 +707,24 @@ class ImuChart {
       ctx.stroke();
     }
 
-    this._drawLegend(ctx, width);
+    this._drawLegend(ctx, width, font);
   }
 
-  _drawLegend(ctx, width) {
+  _drawLegend(ctx, width, font) {
     const items = [
       ['x', this.colors.x],
       ['y', this.colors.y],
       ['z', this.colors.z],
     ];
-    ctx.font = '11px system-ui, sans-serif';
+    ctx.font = font;
+    ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
-    let x = width - 56;
+    let x = width - 64;
     for (const [label, color] of items) {
       ctx.fillStyle = color;
-      ctx.fillRect(x, 7, 8, 2);
-      ctx.fillText(label, x + 11, 10);
-      x += 18;
+      ctx.fillRect(x, 10, 10, 2);
+      ctx.fillText(label, x + 13, 11);
+      x += 21;
     }
   }
 }
