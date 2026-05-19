@@ -13,11 +13,11 @@ serves the page and the telemetry WebSocket on :8888.
 import base64
 import json
 import math
-import struct
 import threading
 import time
 from pathlib import Path
 
+import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
@@ -150,74 +150,76 @@ class DashboardNode(Node):
             base_payload["_error"] = "PointCloud2 has no readable points"
             return base_payload
 
-        endian = ">" if msg.is_bigendian else "<"
-        unpack_float = struct.Struct(endian + "f").unpack_from
         x_offset = fields["x"].offset
         y_offset = fields["y"].offset
         z_offset = fields["z"].offset
         max_offset = max(x_offset, y_offset, z_offset) + 4
-        data = memoryview(msg.data)
-        data_len = len(data)
+        data_len = len(msg.data)
+        min_data_len = (msg.height - 1) * msg.row_step + msg.width * msg.point_step
+        if max_offset > msg.point_step or data_len < min_data_len:
+            base_payload["_error"] = "PointCloud2 binary layout is inconsistent"
+            return base_payload
 
         # Deterministic stride sampling avoids random CPU cost and keeps the
         # Android browser's WebGL buffer bounded.
         stride = max(1, math.ceil(total_points / max_points))
-        sampled = []
-        min_x = min_y = min_z = math.inf
-        max_x = max_y = max_z = -math.inf
+        indexes = np.arange(0, total_points, stride, dtype=np.int64)[:max_points]
+        rows = indexes // msg.width
+        cols = indexes - rows * msg.width
 
-        for idx in range(0, total_points, stride):
-            row = idx // msg.width
-            col = idx - row * msg.width
-            base = row * msg.row_step + col * msg.point_step
-            if base + max_offset > data_len:
-                continue
+        dtype = np.dtype(">f4" if msg.is_bigendian else "<f4")
 
-            x = unpack_float(data, base + x_offset)[0]
-            y = unpack_float(data, base + y_offset)[0]
-            z = unpack_float(data, base + z_offset)[0]
-            if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(z)):
-                continue
+        def field_view(offset: int) -> np.ndarray:
+            return np.ndarray(
+                shape=(msg.height, msg.width),
+                dtype=dtype,
+                buffer=msg.data,
+                offset=offset,
+                strides=(msg.row_step, msg.point_step),
+            )
 
-            sampled.append((x, y, z))
-            min_x = min(min_x, x)
-            min_y = min(min_y, y)
-            min_z = min(min_z, z)
-            max_x = max(max_x, x)
-            max_y = max(max_y, y)
-            max_z = max(max_z, z)
-            if len(sampled) >= max_points:
-                break
+        try:
+            xpoints = field_view(x_offset)[rows, cols].astype(np.float32, copy=False)
+            ypoints = field_view(y_offset)[rows, cols].astype(np.float32, copy=False)
+            zpoints = field_view(z_offset)[rows, cols].astype(np.float32, copy=False)
+        except (TypeError, ValueError) as exc:
+            base_payload["_error"] = f"PointCloud2 decode failed: {exc}"
+            return base_payload
 
-        if not sampled:
+        finite = np.isfinite(xpoints) & np.isfinite(ypoints) & np.isfinite(zpoints)
+        if not np.any(finite):
             base_payload["_error"] = "PointCloud2 contained no finite x/y/z points"
             return base_payload
 
+        xpoints = xpoints[finite]
+        ypoints = ypoints[finite]
+        zpoints = zpoints[finite]
+
+        min_x = float(np.min(xpoints))
+        max_x = float(np.max(xpoints))
+        min_y = float(np.min(ypoints))
+        max_y = float(np.max(ypoints))
+        min_z = float(np.min(zpoints))
+        max_z = float(np.max(zpoints))
         bounds = [min_x, max_x, min_y, max_y, min_z, max_z]
 
-        def encode_axis(value: float, low: float, high: float) -> int:
+        def encode_axis(values: np.ndarray, low: float, high: float) -> np.ndarray:
             if high <= low:
-                return 0
-            normalized = (value - low) / (high - low)
-            return max(0, min(65535, round(normalized * 65535.0)))
+                return np.zeros(values.shape, dtype=np.uint16)
+            encoded = np.rint((values - low) * (65535.0 / (high - low)))
+            return np.clip(encoded, 0, 65535).astype(np.uint16)
 
-        packed = bytearray(len(sampled) * 6)
-        for i, (x, y, z) in enumerate(sampled):
-            struct.pack_into(
-                "<HHH",
-                packed,
-                i * 6,
-                encode_axis(x, min_x, max_x),
-                encode_axis(y, min_y, max_y),
-                encode_axis(z, min_z, max_z),
-            )
+        packed_points = np.empty((xpoints.size, 3), dtype="<u2")
+        packed_points[:, 0] = encode_axis(xpoints, min_x, max_x)
+        packed_points[:, 1] = encode_axis(ypoints, min_y, max_y)
+        packed_points[:, 2] = encode_axis(zpoints, min_z, max_z)
 
         base_payload.update(
             {
                 "encoding": "xyz_uint16_base64",
                 "bounds": bounds,
-                "points": base64.b64encode(packed).decode("ascii"),
-                "point_count": len(sampled),
+                "points": base64.b64encode(packed_points.tobytes()).decode("ascii"),
+                "point_count": int(xpoints.size),
                 "original_point_count": total_points,
                 "stride": stride,
             }
