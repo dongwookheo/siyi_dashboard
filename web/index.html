@@ -675,7 +675,7 @@ class ImuChart {
     ctx.stroke();
 
     ctx.fillStyle = '#89939c';
-    ctx.font = '10px system-ui, sans-serif';
+    ctx.font = '11px system-ui, sans-serif';
     ctx.textAlign = 'right';
     ctx.fillText(maxY.toFixed(2), left - 5, top + 8);
     ctx.fillText('0', left - 5, zeroY + 3);
@@ -705,7 +705,7 @@ class ImuChart {
       ['y', this.colors.y],
       ['z', this.colors.z],
     ];
-    ctx.font = '10px system-ui, sans-serif';
+    ctx.font = '11px system-ui, sans-serif';
     ctx.textAlign = 'left';
     let x = width - 56;
     for (const [label, color] of items) {
@@ -728,8 +728,17 @@ const joyTimes = [];
 const pclTimes = [];
 const imuTimes = [];
 const pointCloudView = new PointCloudView(document.getElementById('pcl-canvas'));
-const imuAngularChart = new ImuChart(document.getElementById('imu-angular-canvas'), 'rad/s');
+const imuAngularChart = new ImuChart(document.getElementById('imu-angular-canvas'), 'deg/s');
 const imuLinearChart = new ImuChart(document.getElementById('imu-linear-canvas'), 'm/s²');
+
+function radToDegVector(vector) {
+  const scale = 180 / Math.PI;
+  return {
+    x: (Number(vector.x) || 0) * scale,
+    y: (Number(vector.y) || 0) * scale,
+    z: (Number(vector.z) || 0) * scale,
+  };
+}
 
 function pushRate(times, outputEl) {
   const now = performance.now();
@@ -763,7 +772,7 @@ function connectWS() {
         pushRate(pclTimes, pclRateEl);
         setBadge('pcl-status', 'PointCloud live', 'ok');
       } else if (msg.topic === '/imu') {
-        imuAngularChart.push(msg.angular_velocity || { x: 0, y: 0, z: 0 });
+        imuAngularChart.push(radToDegVector(msg.angular_velocity || { x: 0, y: 0, z: 0 }));
         imuLinearChart.push(msg.linear_acceleration || { x: 0, y: 0, z: 0 });
         pushRate(imuTimes, imuRateEl);
         imuSourceEl.textContent = msg.source_topic || '-';
