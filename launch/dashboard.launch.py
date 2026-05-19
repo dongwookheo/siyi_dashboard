@@ -31,11 +31,11 @@ def generate_launch_description():
                     }
                 ],
             ),
-            Node(
-                package="siyi_dashboard",
-                executable="image_bridge",
-                name="image_bridge",
-                output="screen",
-            ),
+            # Node(
+            #     package="siyi_dashboard",
+            #     executable="image_bridge",
+            #     name="image_bridge",
+            #     output="screen",
+            # ),
         ]
     )
