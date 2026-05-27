@@ -408,17 +408,17 @@ webrtcTrustedProxies: []
 # Use a blank string to disable.
 webrtcLocalUDPAddress: :8189
 # Address of a local TCP listener that will receive connections.
-# This is disabled by default since TCP is less efficient than UDP and
-# introduces a progressive delay when network is congested.
-webrtcLocalTCPAddress: ''
+# Keep this enabled as a fallback for controller links where UDP ICE is flaky.
+webrtcLocalTCPAddress: :8189
 # WebRTC clients need to know the IP of the server.
 # Gather IPs from interfaces and send them to clients.
-webrtcIPsFromInterfaces: yes
+webrtcIPsFromInterfaces: no
 # Interfaces whose IPs will be sent to clients.
 # An empty value means to use all available interfaces.
 webrtcIPsFromInterfacesList: []
 # Additional hosts or IPs to send to clients.
-webrtcAdditionalHosts: []
+# The dashboard is viewed through the wireless receiver LAN interface.
+webrtcAdditionalHosts: [192.168.144.30]
 # ICE servers. Needed only when local listeners can't be reached by clients.
 # STUN servers allows to obtain and share the public IP of the server.
 # TURN/TURNS servers forces all traffic through them.
@@ -432,9 +432,9 @@ webrtcICEServers2: []
 # Time to wait for the WebRTC handshake to complete.
 webrtcHandshakeTimeout: 10s
 # Maximum time to gather video tracks.
-webrtcTrackGatherTimeout: 2s
+webrtcTrackGatherTimeout: 5s
 # The maximum time to gather STUN candidates.
-webrtcSTUNGatherTimeout: 5s
+webrtcSTUNGatherTimeout: 1s
 
 ###############################################
 # Global settings -> SRT server
@@ -787,15 +787,6 @@ pathDefaults:
 # Path settings
 
 paths:
-  # 'mystream'이라는 경로로 들어오는 영상 설정 (SIYI gimbal etc.)
-  mystream:
-    # Accept RTSP publish from GStreamer or other clients
-    source: publisher
-
-    # Low-latency optimizations (from siyi_sdk)
-    sourceOnDemand: no  # Always ready, no startup delay
-    overridePublisher: yes  # Allow reconnection without restart
-
   # RealSense color stream, pushed by image_bridge.
   rgb:
     source: publisher

@@ -228,7 +228,12 @@ async function whepConnect(streamPath, videoEl, badgeId) {
   pc.addTransceiver('video', { direction: 'recvonly' });
 
   pc.ontrack = (e) => {
-    if (videoEl.srcObject !== e.streams[0]) videoEl.srcObject = e.streams[0];
+    if (videoEl.srcObject !== e.streams[0]) {
+      videoEl.srcObject = e.streams[0];
+    }
+    videoEl.play().catch(() => {
+      setBadge(badgeId, `${streamPath} play blocked`, 'down');
+    });
   };
   pc.onconnectionstatechange = () => {
     const state = pc.connectionState;
