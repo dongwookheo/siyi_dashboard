@@ -57,21 +57,31 @@
   .idle { background: #39414a; }
   .layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 430px;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+    grid-template-rows: minmax(0, 1fr) 230px;
+    grid-template-areas:
+      "main rail"
+      "log rail";
     gap: 10px;
     height: calc(100vh - 62px);
     min-height: 0;
   }
-  .stack {
-    min-height: 0;
-  }
-  .stack > .card {
-    height: 100%;
-    min-height: 0;
-  }
-  .side {
+  .main-monitor {
+    grid-area: main;
     display: grid;
-    grid-template-rows: 300px 150px 150px minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+  }
+  .log-panel {
+    grid-area: log;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+  }
+  .monitor-rail {
+    grid-area: rail;
+    display: grid;
+    grid-template-rows: repeat(3, minmax(0, 1fr));
     gap: 10px;
     min-height: 0;
   }
@@ -99,26 +109,74 @@
     font-weight: 400;
     white-space: nowrap;
   }
-  video, canvas {
+  .main-stage {
+    position: relative;
+    min-height: 0;
+  }
+  .monitor-pane {
+    display: none;
+    height: 100%;
+    min-height: 0;
+  }
+  .monitor-pane.is-active {
+    display: block;
+  }
+  .monitor-pane.imu-main-grid.is-active {
+    display: grid;
+  }
+  .imu-main-grid {
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+  }
+  .imu-thumb-grid {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 6px;
+    min-height: 0;
+  }
+  .monitor-card {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 6px;
+    width: 100%;
+    height: 100%;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    appearance: none;
+  }
+  .monitor-card:hover,
+  .monitor-card:focus-visible {
+    border-color: #4e8fd6;
+    outline: none;
+  }
+  .monitor-card.is-active {
+    border-color: var(--accent);
+    background: #17202a;
+  }
+  .monitor-card video,
+  .monitor-card canvas {
+    pointer-events: none;
+  }
+  video,
+  canvas {
     display: block;
     width: 100%;
+    height: 100%;
     background: #050607;
     border-radius: 4px;
   }
   video {
-    height: calc(100% - 24px);
     object-fit: contain;
   }
   /* Depth stream disabled in this dashboard view. */
-  #pcl-canvas {
-    height: calc(100% - 24px);
+  #pcl-main-canvas,
+  #pcl-thumb-canvas {
     touch-action: none;
   }
-  .imu-canvas {
-    height: calc(100% - 24px);
-  }
   pre {
-    height: calc(100% - 44px);
+    height: 100%;
     margin: 0;
     padding: 10px;
     overflow: auto;
@@ -135,15 +193,19 @@
       display: block;
       height: auto;
     }
-    .stack, .side {
+    .main-monitor,
+    .log-panel,
+    .monitor-rail {
       display: block;
     }
     .card {
       margin-bottom: 10px;
     }
-    video {
-      height: auto;
-      aspect-ratio: 16 / 9;
+    .main-stage {
+      height: min(58vh, 520px);
+    }
+    .monitor-card {
+      height: 220px;
     }
   }
 </style>
@@ -161,54 +223,64 @@
   </header>
 
   <main class="layout">
-    <section class="stack">
-      <div class="card">
-        <h2>RGB <span class="meta">WebRTC</span></h2>
-        <video id="vid-rgb" autoplay playsinline muted></video>
+    <section class="card main-monitor">
+      <h2>
+        Main Monitor
+        <span class="meta" id="main-monitor-label">Camera</span>
+      </h2>
+      <div class="main-stage">
+        <div id="main-camera" class="monitor-pane is-active" data-view="camera">
+          <video id="vid-rgb-main" autoplay playsinline muted></video>
+        </div>
+        <div id="main-lidar" class="monitor-pane" data-view="lidar">
+          <canvas id="pcl-main-canvas"></canvas>
+        </div>
+        <div id="main-imu" class="monitor-pane imu-main-grid" data-view="imu">
+          <canvas id="imu-angular-main-canvas" class="imu-canvas"></canvas>
+          <canvas id="imu-linear-main-canvas" class="imu-canvas"></canvas>
+        </div>
       </div>
-      <!-- Depth video card disabled. -->
     </section>
 
-    <section class="side">
-      <div class="card">
+    <section class="card log-panel">
+      <h2>
+        /joy
+        <span class="meta">
+          <span id="last-ts">-</span> |
+          <span id="rate">0.0</span> Hz
+        </span>
+      </h2>
+      <pre id="last-joy">(아직 메시지 없음)</pre>
+    </section>
+
+    <aside class="monitor-rail" aria-label="실시간 모니터링">
+      <div class="card monitor-card is-active" data-monitor="camera" role="button" tabindex="0" aria-pressed="true">
+        <h2>Camera <span class="meta">WebRTC</span></h2>
+        <video id="vid-rgb-thumb" autoplay playsinline muted></video>
+      </div>
+      <div class="card monitor-card" data-monitor="lidar" role="button" tabindex="0" aria-pressed="false">
         <h2>
-          PointCloud
+          LiDAR
           <span class="meta">
             <span id="pcl-count">0</span> pts |
             <span id="pcl-rate">0.0</span> Hz
           </span>
         </h2>
-        <canvas id="pcl-canvas"></canvas>
+        <canvas id="pcl-thumb-canvas"></canvas>
       </div>
-      <div class="card">
+      <div class="card monitor-card" data-monitor="imu" role="button" tabindex="0" aria-pressed="false">
         <h2>
-          Angular Velocity
+          IMU
           <span class="meta">
             <span id="imu-rate">0.0</span> Hz
           </span>
         </h2>
-        <canvas id="imu-angular-canvas" class="imu-canvas"></canvas>
+        <div class="imu-thumb-grid">
+          <canvas id="imu-angular-thumb-canvas" class="imu-canvas"></canvas>
+          <canvas id="imu-linear-thumb-canvas" class="imu-canvas"></canvas>
+        </div>
       </div>
-      <div class="card">
-        <h2>
-          Linear Acceleration
-          <span class="meta">
-            <span id="imu-source">-</span>
-          </span>
-        </h2>
-        <canvas id="imu-linear-canvas" class="imu-canvas"></canvas>
-      </div>
-      <div class="card">
-        <h2>
-          /joy
-          <span class="meta">
-            <span id="last-ts">-</span> |
-            <span id="rate">0.0</span> Hz
-          </span>
-        </h2>
-        <pre id="last-joy">(아직 메시지 없음)</pre>
-      </div>
-    </section>
+    </aside>
   </main>
 
 <script>
@@ -220,7 +292,8 @@ function setBadge(id, text, state) {
   el.className = 'status ' + state;
 }
 
-async function whepConnect(streamPath, videoEl, badgeId) {
+async function whepConnect(streamPath, videoEls, badgeId) {
+  const targets = Array.isArray(videoEls) ? videoEls : [videoEls];
   const pc = new RTCPeerConnection({
     iceServers: [],
     bundlePolicy: 'max-bundle',
@@ -228,19 +301,22 @@ async function whepConnect(streamPath, videoEl, badgeId) {
   pc.addTransceiver('video', { direction: 'recvonly' });
 
   pc.ontrack = (e) => {
-    if (videoEl.srcObject !== e.streams[0]) {
-      videoEl.srcObject = e.streams[0];
+    for (const videoEl of targets) {
+      if (!videoEl) continue;
+      if (videoEl.srcObject !== e.streams[0]) {
+        videoEl.srcObject = e.streams[0];
+      }
+      videoEl.play().catch(() => {
+        setBadge(badgeId, `${streamPath} play blocked`, 'down');
+      });
     }
-    videoEl.play().catch(() => {
-      setBadge(badgeId, `${streamPath} play blocked`, 'down');
-    });
   };
   pc.onconnectionstatechange = () => {
     const state = pc.connectionState;
     setBadge(badgeId, `${streamPath} ${state}`, state === 'connected' ? 'ok' : 'down');
     if (state === 'failed' || state === 'disconnected' || state === 'closed') {
       try { pc.close(); } catch {}
-      setTimeout(() => whepConnect(streamPath, videoEl, badgeId), 2000);
+      setTimeout(() => whepConnect(streamPath, targets, badgeId), 2000);
     }
   };
 
@@ -269,23 +345,26 @@ async function whepConnect(streamPath, videoEl, badgeId) {
     });
   } catch (err) {
     setBadge(badgeId, `${streamPath} fetch fail`, 'down');
-    setTimeout(() => whepConnect(streamPath, videoEl, badgeId), 2000);
+    setTimeout(() => whepConnect(streamPath, targets, badgeId), 2000);
     return;
   }
   if (!res.ok) {
     setBadge(badgeId, `${streamPath} HTTP ${res.status}`, 'down');
-    setTimeout(() => whepConnect(streamPath, videoEl, badgeId), 2000);
+    setTimeout(() => whepConnect(streamPath, targets, badgeId), 2000);
     return;
   }
   const answerSdp = await res.text();
   await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 }
 
-whepConnect('rgb', document.getElementById('vid-rgb'), 'rgb-status');
+whepConnect('rgb', [
+  document.getElementById('vid-rgb-main'),
+  document.getElementById('vid-rgb-thumb'),
+], 'rgb-status');
 // Depth WHEP connection disabled.
 
 class PointCloudView {
-  constructor(canvas) {
+  constructor(canvas, interactive = true) {
     this.canvas = canvas;
     this.gl = canvas.getContext('webgl', {
       antialias: false,
@@ -313,7 +392,9 @@ class PointCloudView {
       return;
     }
     this._initGL();
-    this._bindInput();
+    if (interactive) {
+      this._bindInput();
+    }
     this.resize();
     window.addEventListener('resize', () => this.resize());
   }
@@ -631,7 +712,7 @@ class ImuChart {
     ctx.fillStyle = '#050607';
     ctx.fillRect(0, 0, width, height);
 
-    const fontSize = 20;
+    const fontSize = Math.max(11, Math.min(20, Math.floor(height / 8)));
     const font = `${fontSize}px system-ui, sans-serif`;
     ctx.font = font;
     ctx.textBaseline = 'middle';
@@ -740,13 +821,59 @@ const rateEl = document.getElementById('rate');
 const pclCountEl = document.getElementById('pcl-count');
 const pclRateEl = document.getElementById('pcl-rate');
 const imuRateEl = document.getElementById('imu-rate');
-const imuSourceEl = document.getElementById('imu-source');
+const mainMonitorLabelEl = document.getElementById('main-monitor-label');
 const joyTimes = [];
 const pclTimes = [];
 const imuTimes = [];
-const pointCloudView = new PointCloudView(document.getElementById('pcl-canvas'));
-const imuAngularChart = new ImuChart(document.getElementById('imu-angular-canvas'), 'deg/s');
-const imuLinearChart = new ImuChart(document.getElementById('imu-linear-canvas'), 'm/s²');
+const pointCloudMainView = new PointCloudView(document.getElementById('pcl-main-canvas'));
+const pointCloudThumbView = new PointCloudView(document.getElementById('pcl-thumb-canvas'), false);
+const imuAngularMainChart = new ImuChart(document.getElementById('imu-angular-main-canvas'), 'deg/s');
+const imuLinearMainChart = new ImuChart(document.getElementById('imu-linear-main-canvas'), 'm/s²');
+const imuAngularThumbChart = new ImuChart(document.getElementById('imu-angular-thumb-canvas'), 'deg/s');
+const imuLinearThumbChart = new ImuChart(document.getElementById('imu-linear-thumb-canvas'), 'm/s²');
+const monitorLabels = {
+  camera: 'Camera',
+  lidar: 'LiDAR',
+  imu: 'IMU',
+};
+const monitorCards = Array.from(document.querySelectorAll('[data-monitor]'));
+const monitorPanes = Array.from(document.querySelectorAll('[data-view]'));
+
+function resizeMonitorViews() {
+  pointCloudMainView.resize();
+  pointCloudThumbView.resize();
+  for (const chart of [
+    imuAngularMainChart,
+    imuLinearMainChart,
+    imuAngularThumbChart,
+    imuLinearThumbChart,
+  ]) {
+    chart.resize();
+  }
+}
+
+function selectMonitor(view) {
+  for (const card of monitorCards) {
+    const active = card.dataset.monitor === view;
+    card.classList.toggle('is-active', active);
+    card.setAttribute('aria-pressed', String(active));
+  }
+  for (const pane of monitorPanes) {
+    pane.classList.toggle('is-active', pane.dataset.view === view);
+  }
+  mainMonitorLabelEl.textContent = monitorLabels[view] || view;
+  requestAnimationFrame(resizeMonitorViews);
+}
+
+for (const card of monitorCards) {
+  card.addEventListener('click', () => selectMonitor(card.dataset.monitor));
+  card.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    selectMonitor(card.dataset.monitor);
+  });
+}
+requestAnimationFrame(resizeMonitorViews);
 
 function radToDegVector(vector) {
   const scale = 180 / Math.PI;
@@ -784,15 +911,19 @@ function connectWS() {
           setBadge('pcl-status', 'PointCloud error', 'down');
           return;
         }
-        pointCloudView.update(msg);
+        pointCloudMainView.update(msg);
+        pointCloudThumbView.update(msg);
         pclCountEl.textContent = String(msg.point_count || 0);
         pushRate(pclTimes, pclRateEl);
         setBadge('pcl-status', 'PointCloud live', 'ok');
       } else if (msg.topic === '/imu') {
-        imuAngularChart.push(radToDegVector(msg.angular_velocity || { x: 0, y: 0, z: 0 }));
-        imuLinearChart.push(msg.linear_acceleration || { x: 0, y: 0, z: 0 });
+        const angular = radToDegVector(msg.angular_velocity || { x: 0, y: 0, z: 0 });
+        const linear = msg.linear_acceleration || { x: 0, y: 0, z: 0 };
+        imuAngularMainChart.push(angular);
+        imuAngularThumbChart.push(angular);
+        imuLinearMainChart.push(linear);
+        imuLinearThumbChart.push(linear);
         pushRate(imuTimes, imuRateEl);
-        imuSourceEl.textContent = msg.source_topic || '-';
         setBadge('imu-status', 'IMU live', 'ok');
       }
     } catch {
